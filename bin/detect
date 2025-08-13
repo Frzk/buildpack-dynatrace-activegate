@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+echo "Dynatrace ActiveGate"
+exit 0
