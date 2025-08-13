@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+# usage: bin/compile <build_dir> <cache_dir> <env_dir>
+
+# cmnlib_url="https://github.com/Scalingo/cmnlib/raw/refs/tags/<version>/cmnlib.sh"
+
+#if ! declare -F cmn::output::info >/dev/null; then
+#	source /dev/stdin <<< \
+#		"$( curl --silent --location --retry 3 "${cmnlib_url}" \
+#		|| printf "echo ' 🗙 Unable to load cmnlib, aborting.' >&2 && exit 1"; )"
+#fi
+
+# shellcheck disable=SC1091
+source "$( cd -P "$( dirname "${0}" )" && pwd )/../cmnlib.sh"
+
+cmn::main::start "${0}" "${1}" "${2}" "${3}"
+
+
+
+dynatrace::activegate::extract_archive() {
+
+	# local archive="dynatrace_activegate.tar.gz"
+	local delimiter_begin="#################ENDOFSCRIPTMARK################"
+	local delimiter_end="----SIGNED-INSTALLER"
+
+	local src
+	local dst
+	local tar_begin
+	local tar_end
+	local tar_length
+
+	src="${1}"
+	dst="${2}"
+
+	tar_begin="$( str_locate "${delimiter_begin}" "${src}" )"
+	tar_begin=$(( tar_begin + 1 ))
+
+	tar_end="$( str_locate "${delimiter_end}" "${src}" )"
+
+	if [ -n "${tar_end}" ] ; then
+		tar_length=$(( tar_end - tar_begin ))
+
+		tail -n +"${tar_begin}" "${src}" \
+			| head -${tar_length} \
+			| base64 -di > "${dst}"
+	else
+		# echo "Warning: S/MIME signature is missing"
+		tail -n +"${tar_begin}" "${src}" \
+			| base64 -di > "${dst}"
+	fi
+}
+
+str_locate() {
+	
+	local needle
+	local haystack
+	local lineno
+
+	needle="${1}"
+	haystack="${2}"
+
+	lineno="$( grep --line-number "^${needle}" "${haystack}" \
+				| head -n 1 \
+				| cut -d: -f1 )"
+
+	echo "${lineno}"
+}
+
+
+src="Dynatrace-ActiveGate.sh"
+archive="dynatrace-activegate.tar.gz"
+
+install_dir="${build_dir:?}/dynatrace/gateway"
+
+cmn::step::start "Step 1"
+
+cmn::task::start "Extracting archive from script"
+if ! dynatrace::activegate::extract_archive "${src}" "${tmp_dir:?}/${archive}"
+then
+	cmn::task::fail
+	cmn::step::fail
+
+	exit 11
+fi
+cmn::task::finish
+
+cmn::task::start "Decompressing archive"
+if ! mkdir --parents "${install_dir}"; then
+	cmn::task::fail
+	cmn::step::fail
+
+	exit 12
+fi
+cmn::task::finish
+
+if ! tar --extract --gzip --file="${tmp_dir}/${archive}" \
+	--strip-components=1 --directory="${tmp_dir}"
+then
+	cmn::task::fail
+	cmn::step::fail
+
+	exit 13
+fi
+cmn::task::finish
+
+cmn::task::start "Moving archive to cache"
+if ! mv "${tmp_dir}/${archive}" "${cache_dir:?}"; then
+	cmn::task::fail
+fi
+cmn::task::finish
+
+cmn::step::finish
+
+
+cmn::step::start "Preparing deployment"
+
+cmn::task::start "Creating directories"
+if ! mkdir --parent "${install_dir}/"{bin,config,jre,lib,ssl/customkeys}
+then
+	cmn::task::fail
+	cmn::step::fail
+
+	exit 21
+fi
+
+cmn::step::finish
+
+
+cmn::step::start "Copying files"
+
+cmn::task::start "Copying lib"
+if ! cp --archive --recursive "${tmp_dir}/gateway/lib/"* \
+	"${install_dir}/lib/"
+then
+	cmn::task::fail
+	cmn::step::fail
+
+	exit 32
+fi
+cmn::task::finish
+
+cmn::task::start "Copying conf"
+if ! cp --archive --recursive "${tmp_dir}/gateway/conf/"* \
+	"${install_dir}/config/"
+then
+	cmn::task::fail
+	cmn::step::fail
+
+	exit 33
+fi
+cmn::task::finish
+
+cmn::task::start "Copying custom keys"
+if ! cp "${tmp_dir}/gateway/conf/trusted.jks" \
+	"${install_dir}/ssl/customkeys/"
+then
+	cmn::task::fail
+	cmn::step::fail
+
+	exit 35
+fi
+cmn::task::finish
+
+cmn::task::start "Copying binary file"
+if ! cp "${tmp_dir}/launcher/dynatracewatchdog" \
+	"${install_dir}/bin/dynatracegateway"
+then
+	cmn::task::fail
+	cmn::step::fail
+
+	exit 36
+fi
+cmn::task::finish
+
+cmn::task::start "Copying start script"
+if ! cp "${buildpack_dir:?}/files/start.sh" \
+	"${build_dir}/start.sh"
+then
+	cmn::task::fail
+	cmn::step::fail
+fi
+cmn::task::finish
+
+cmn::step::finish
+
+
+cmn::step::start "Installing JRE"
+
+cmn::task::start "Decompressing JRE"
+if ! tar -xzf "${tmp_dir}/jre"*"_64.tgz" \
+	--directory="${install_dir}/jre/" \
+	--strip-components=1
+then
+	cmn::task::fail
+	cmn::step::fail
+
+	exit 41
+fi
+cmn::task::finish
+
+cmn::step::finish
+
+
+cmn::step::start "Build config"
+
+cmn::task::start ""
+
+
+# Always create an empty custom config
+touch "${build_dir}/authorization.properties"
+touch "${build_dir}/custom.properties"
+touch "${build_dir}/launcheruserconfig.conf"
+
+# Where the gateway files are when in RUN:
+app_dir="${install_dir/"${build_dir}"/"/app"}"
+
+conf_file="${install_dir}/config/dynatracegateway.ini"
+
+sed -i "s%{{JAVA_TEMP_DIR}}%/tmp%" "${conf_file}"
+
+# watchdog configuration
+sed -i "s%{{JAVA_DIR}}%${app_dir}/jre%" "${conf_file}"
+#FIXME:
+sed -i "s%{{LOG_DIR}}%/tmp%" "${conf_file}"
+sed -i "s%{{CONF_DIR}}%${app_dir}/config%" "${conf_file}"
+sed -i "s%{{INSTALL_DIR}}%${app_dir}%" "${conf_file}"
+sed -i "s%{{APPLICATION_EXTENSION}}%%" "${conf_file}"
+sed -i "s%{{DYNAMIC_LIBRARY_EXTENSION}}%so%" "${conf_file}"
+sed -i "s%{{DYNAMIC_LIBRARY_PREFIX}}%lib%" "${conf_file}"
+sed -i "s%{{GATEWAY_INSTALL_DIR}}%${app_dir}%" "${conf_file}"
+sed -i "s%{{JAVA_TEMP_DIR}}%/tmp%" "${conf_file}"
+cmn::task::finish
+
+cmn::step::finish
+
+# log dir
+
+# tenantData?
+# dumpDir?
+# archive dir?
+# collector temp dir?
+
+cmn::main::finish
