@@ -71,7 +71,7 @@ version="${DYNATRACE_ACTIVEGATE_VERSION:-"latest"}"
 
 arch="${DYNATRACE_ACTIVEGATE_ARCH:-"x86"}"
 tenant="${DYNATRACE_ACTIVEGATE_TENANT:?"Missing mandatory environment variable"}"
-api_token="${DYNATRACE_ACTIVEGATE_API_TOKEN:?"Missing mandatory environment variable"}"
+auth_token="${DYNATRACE_ACTIVEGATE_AUTH_TOKEN:?"Missing mandatory environment variable"}"
 
 activegate_url="https://${tenant}.live.dynatrace.com/api/v1/deployment/installer/gateway/unix/${version}?arch=${arch}"
 installer="${tmp_dir:?}/Dynatrace-ActiveGate.sh"
@@ -91,7 +91,7 @@ cmn::step::start "Downloading Dynatrace ActiveGate (${version})"
 cmn::task::start "Downloading installer"
 if ! curl --silent --fail --retry 3 --location "${activegate_url}" \
 	--output "${installer}" \
-	--header "Authorization: Api-Token ${api_token}"
+	--header "Authorization: Api-Token ${auth_token}"
 then
 	cmn::task::fail
 	cmn::step::fail
