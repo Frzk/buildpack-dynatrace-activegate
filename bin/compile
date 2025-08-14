@@ -171,9 +171,11 @@ then
 fi
 cmn::task::finish
 
-cmn::task::start "Copying start script"
-if ! cp "${buildpack_dir:?}/files/start.sh" \
-	"${build_dir}/start.sh"
+cmn::task::start "Copying profile.d script"
+mkdir --parents "${build_dir}/.profile.d"
+
+if ! cp "${buildpack_dir:?}/files/profile.d/050-dynatrace-activegate.sh" \
+	"${build_dir}/.profile.d/"
 then
 	cmn::task::fail
 	cmn::step::fail

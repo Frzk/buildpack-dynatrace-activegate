@@ -2,5 +2,5 @@
 
 cat <<EOF
 default_process_types:
-  web: sh /app/start.sh
+  web: /app/dynatrace/gateway/bin/dynatracegateway -config /app/dynatrace/gateway/config/dynatrace.ini
 EOF
